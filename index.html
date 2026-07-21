@@ -158,7 +158,7 @@
         payload['Giới tính'] = data.gender;
         payload['Khóa học'] = data.course;
         payload['Chi nhánh'] = data.branch;
-        payload['Ngày ghi danh'] = data.enrollmentDate;
+        payload['Ngày khai giảng'] = data.enrollmentDate;
         payload['Tên lớp'] = data.tenLop;
 
         return payload;
@@ -187,7 +187,7 @@
                   gender: cleanS.gender || cleanS['giới tính'] || '',
                   course: cleanS.course || cleanS['khóa học'] || '',
                   branch: cleanS.branch || cleanS['chi nhánh'] || 'Offline',
-                  enrollmentDate: cleanS.enrollmentdate || cleanS['ngày ghi danh'] || '',
+                  enrollmentDate: cleanS.enrollmentdate || cleanS['ngày khai giảng'] || '',
                   age: cleanS.age || '',
                   totalSessions: cleanS.totalsessions || '',
                   attendedSessions: cleanS.attendedsessions || '',
@@ -610,7 +610,7 @@
                       <input type="text" placeholder="VD: 3K6 SCF1.1" value={formData.tenLop} onChange={e => setFormData({...formData, tenLop: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-xl focus:ring-4 focus:ring-teal-500/15 focus:border-teal-500 block p-3 transition-all font-medium placeholder-slate-400" />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Ngày ghi danh <span className="text-rose-500">*</span></label>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Ngày khai giảng <span className="text-rose-500">*</span></label>
                       <input type="date" value={formData.enrollmentDate} onChange={e => setFormData({...formData, enrollmentDate: e.target.value})} className="w-full bg-slate-50 border border-slate-200 text-slate-800 text-sm rounded-xl focus:ring-4 focus:ring-teal-500/15 focus:border-teal-500 block p-3 transition-all font-medium uppercase" required />
                     </div>
                   </div>
@@ -684,7 +684,7 @@
                         <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Chi nhánh</th>
                         <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Tuổi</th>
                         <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Giới tính</th>
-                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Ngày ghi danh</th>
+                        <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider">Ngày khai giảng</th>
                         <th className="py-4 px-6 text-xs font-bold text-slate-500 uppercase tracking-wider text-center">Thao tác</th>
                       </tr>
                     </thead>
