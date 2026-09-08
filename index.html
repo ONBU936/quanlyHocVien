@@ -61,6 +61,11 @@
       const [showEvalModal, setShowEvalModal] = useState(false);
       const [studentActionTarget, setStudentActionTarget] = useState(null);
       
+      const [showSaveAllModal, setShowSaveAllModal] = useState(false);
+      const [pendingSaves, setPendingSaves] = useState([]);
+      const [isSavingAll, setIsSavingAll] = useState(false);
+      const [saveProgress, setSaveProgress] = useState({ current: 0, total: 0 });
+
       // Form State
       const defaultForm = { id: '', fullName: '', dob: '', tenLop: '', gender: '', course: '', branch: '', enrollmentDate: new Date().toISOString().slice(0, 10) };
       const [formData, setFormData] = useState(defaultForm);
@@ -372,6 +377,80 @@
         }
       };
 
+      const getModifiedStudents = () => {
+        return filteredStudents.filter(s => {
+          const ev = evalData[s.id];
+          if (!ev) return false;
+          // So sánh dữ liệu hiện tại trên UI với dữ liệu gốc để tìm ra người bị sửa điểm
+          const tSessionsChanged = String(ev.totalSessions || '') !== String(s.totalSessions || '');
+          const aSessionsChanged = String(ev.attendedSessions || '') !== String(s.attendedSessions || '');
+          const sScoreChanged = String(ev.skillScore || '') !== String(s.skillScore || '');
+          return tSessionsChanged || aSessionsChanged || sScoreChanged;
+        });
+      };
+
+      const handleSaveAllClick = () => {
+        const modified = getModifiedStudents();
+        if (modified.length === 0) {
+          showNotif('Chưa có thay đổi điểm số nào để lưu!', 'error');
+          return;
+        }
+        setPendingSaves(modified);
+        setShowSaveAllModal(true);
+      };
+
+      const executeSaveAll = async () => {
+        setShowSaveAllModal(false);
+        setIsSavingAll(true);
+        setSaveProgress({ current: 0, total: pendingSaves.length });
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        // Lưu tuần tự từng học viên để tránh quá tải Google Apps Script
+        for (let i = 0; i < pendingSaves.length; i++) {
+          const student = pendingSaves[i];
+          const currentEval = evalData[student.id];
+          
+          const attStatus = getAttendanceStatus(Number(currentEval.totalSessions), Number(currentEval.attendedSessions));
+          const skStatus = getSkillStatus(currentEval.skillScore, student.course);
+          const finalGrade = getFinalGrade(attStatus, skStatus);
+
+          const updatedStudent = {
+            ...student,
+            totalSessions: currentEval.totalSessions,
+            attendedSessions: currentEval.attendedSessions,
+            attendanceStatus: attStatus,
+            skillScore: currentEval.skillScore,
+            skillStatus: skStatus,
+            finalGrade: finalGrade
+          };
+
+          try {
+            await fetch(GOOGLE_SCRIPT_URL, {
+              method: 'POST',
+              body: JSON.stringify({ action: 'EDIT', data: buildPayloadData(updatedStudent) })
+            });
+            successCount++;
+          } catch(e) {
+            console.error(`Lỗi lưu điểm HV ${student.id}:`, e);
+            errorCount++;
+          }
+          // Cập nhật tiến trình lên UI
+          setSaveProgress({ current: i + 1, total: pendingSaves.length });
+        }
+
+        setIsSavingAll(false);
+        
+        if (errorCount === 0) {
+          showNotif(`Đã lưu thành công điểm cho ${successCount} học viên!`, 'success');
+        } else {
+          showNotif(`Đã lưu ${successCount}, lỗi ${errorCount} học viên. Vui lòng kiểm tra lại đường truyền.`, 'error');
+        }
+        
+        fetchData(); // Tải lại dữ liệu mới nhất
+      };
+
       const handleFilterTypeChange = (type) => {
         setFilterType(type);
         const year = new Date().getFullYear();
@@ -410,6 +489,29 @@
 
       const coursesList = ['Tiếng Trung sơ cấp', 'Tiếng Trung trung cấp', 'Tiếng Trung cao cấp', 'Tiếng Trung giao tiếp', 'Tiếng Trung thiếu nhi'];
       
+      const groupedClassData = useMemo(() => {
+        const result = {};
+        coursesList.forEach(c => { result[c] = {}; });
+        result['Khác (Chưa phân khóa)'] = {}; 
+
+        filteredStudents.forEach(s => {
+          const course = s.course;
+          const targetCourse = result[course] ? course : 'Khác (Chưa phân khóa)';
+          
+          const rawClass = s.tenLop || '';
+          const normalizedClass = rawClass.trim().toLowerCase() || '(trống)';
+          
+          if (!result[targetCourse][normalizedClass]) {
+            result[targetCourse][normalizedClass] = {
+              displayName: rawClass || '(Trống)',
+              students: []
+            };
+          }
+          result[targetCourse][normalizedClass].students.push(s);
+        });
+        return result;
+      }, [filteredStudents]);
+
       const getCourseStats = (courseName) => {
         const inCourse = filteredStudents.filter(s => s.course === courseName);
         const total = inCourse.length;
@@ -434,14 +536,30 @@
       return (
         <div className="min-h-screen pb-12 font-sans">
           {/* SPINNER LOADING GLOBAL */}
-          {isLoading && (
-            <div className="fixed inset-0 bg-white/70 backdrop-blur-md z-[9999] flex flex-col items-center justify-center transition-all">
-              <div className="relative w-20 h-20 mb-6">
-                <div className="absolute inset-0 border-4 border-[#27bdbe]/20 rounded-full"></div>
-                <div className="absolute inset-0 border-4 border-[#27bdbe] border-t-transparent rounded-full animate-spin shadow-lg"></div>
+          {(isLoading || isSavingAll) && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center transition-all">
+              <div className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center min-w-[300px]">
+                <div className="relative w-16 h-16 mb-6">
+                  <div className="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
+                  <div className="absolute inset-0 border-4 border-teal-500 border-t-transparent rounded-full animate-spin"></div>
+                </div>
+                <p className="text-slate-800 font-extrabold text-lg animate-pulse tracking-wide">
+                  {isSavingAll ? 'Đang đồng bộ dữ liệu điểm...' : 'Đang tải dữ liệu...'}
+                </p>
+                {isSavingAll ? (
+                  <div className="mt-4 w-full">
+                    <div className="flex justify-between text-xs font-bold text-slate-500 mb-2">
+                      <span>Tiến trình lưu</span>
+                      <span className="text-teal-600">{saveProgress.current} / {saveProgress.total}</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                      <div className="bg-teal-500 h-2.5 rounded-full transition-all duration-300" style={{ width: `${(saveProgress.current / Math.max(saveProgress.total, 1)) * 100}%` }}></div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-sm mt-2 font-medium">Vui lòng chờ trong giây lát</p>
+                )}
               </div>
-              <p className="text-slate-800 font-extrabold text-lg animate-pulse tracking-wide">Đang đồng bộ dữ liệu...</p>
-              <p className="text-slate-500 text-sm mt-2 font-medium">Hệ thống đang xử lý, vui lòng chờ trong giây lát</p>
             </div>
           )}
 
@@ -495,6 +613,30 @@
             </div>
           )}
 
+          {}
+          {showSaveAllModal && (
+            <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9998] flex items-center justify-center px-4 animate-fade-in">
+              <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-[0_20px_50px_-12px_rgba(0,0,0,0.3)] border-t-4 border-teal-500">
+                <div className="w-14 h-14 rounded-2xl bg-teal-50 flex items-center justify-center mb-6">
+                  <span className="text-teal-600 text-2xl">💾</span>
+                </div>
+                <h3 className="text-2xl font-extrabold text-slate-800 mb-2">Lưu Điểm Hàng Loạt</h3>
+                <p className="text-slate-600 mb-6 font-medium leading-relaxed">
+                  Hệ thống phát hiện có <strong className="text-teal-600 text-lg">{pendingSaves.length}</strong> học viên đã được nhập/sửa điểm. Bạn có muốn lưu tất cả thay đổi này lên hệ thống?
+                </p>
+                <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 mb-8">
+                  <p className="text-amber-800 text-xs font-bold flex items-start gap-2">
+                    <span className="mt-0.5">⚠️</span> Quá trình lưu hàng loạt có thể mất vài giây. Vui lòng không đóng trình duyệt trong khi đang lưu.
+                  </p>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button onClick={() => setShowSaveAllModal(false)} className="px-5 py-2.5 bg-slate-100 text-slate-700 font-bold rounded-xl hover:bg-slate-200 transition-colors">Kiểm tra lại</button>
+                  <button onClick={executeSaveAll} className="px-5 py-2.5 bg-gradient-to-r from-teal-500 to-teal-600 text-white font-bold rounded-xl hover:shadow-lg hover:-translate-y-0.5 transition-all">Đồng Ý Lưu Tất Cả</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* HEADER CHÍNH */}
           <header className="bg-white/80 backdrop-blur-lg border-b border-slate-200/60 py-4 px-6 shadow-sm sticky top-0 z-40 print:hidden">
             <div className="max-w-7xl mx-auto flex items-center justify-between">
@@ -538,6 +680,9 @@
               <button onClick={() => setActiveTab('report')} className={`whitespace-nowrap px-6 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 ${activeTab === 'report' ? 'bg-white text-indigo-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/80'}`}>
                 3. Báo Cáo Sở GD&ĐT
               </button>
+              <button onClick={() => setActiveTab('verify')} className={`whitespace-nowrap px-6 py-2.5 rounded-xl font-bold text-sm transition-all duration-300 ${activeTab === 'verify' ? 'bg-white text-indigo-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/80'}`}>
+                4. Kiểm Tra Lớp Học
+              </button>
             </div>
 
             <div className="flex flex-wrap items-center gap-5 bg-white px-6 py-3.5 rounded-2xl border border-slate-200/80 shadow-sm text-sm">
@@ -579,6 +724,7 @@
             </div>
           </div>
 
+          {}
           {/* TAB 1: QUẢN LÝ HỌC VIÊN */}
           {activeTab === 'manage' && (
             <div className="max-w-7xl mx-auto px-6 space-y-8 print:hidden animate-fade-in">
@@ -733,18 +879,25 @@
                       <p className="text-sm text-slate-500 font-medium">Hệ thống KHÔNG tự động lưu. Vui lòng nhập số liệu và nhấn nút <b className="text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">Lưu Điểm</b> ở cột Thao tác.</p>
                     </div>
                     
-                    {/* Thanh tìm kiếm nhanh Tab 2 */}
-                    <div className="relative shrink-0">
-                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
-                        <span className="text-slate-400">🔍</span>
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
+                      {/* Thanh tìm kiếm nhanh Tab 2 */}
+                      <div className="relative shrink-0 w-full sm:w-auto">
+                        <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+                          <span className="text-slate-400">🔍</span>
+                        </div>
+                        <input 
+                          type="text" 
+                          placeholder="Tìm tên, lớp, mã HV..." 
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="bg-white border border-slate-200 text-slate-800 text-sm rounded-xl focus:ring-4 focus:ring-indigo-500/15 focus:border-indigo-500 block w-full sm:w-72 pl-10 p-2.5 transition-all font-medium placeholder-slate-400 shadow-sm outline-none"
+                        />
                       </div>
-                      <input 
-                        type="text" 
-                        placeholder="Tìm tên, lớp, mã HV..." 
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="bg-white border border-slate-200 text-slate-800 text-sm rounded-xl focus:ring-4 focus:ring-indigo-500/15 focus:border-indigo-500 block w-full sm:w-72 pl-10 p-2.5 transition-all font-medium placeholder-slate-400 shadow-sm outline-none"
-                      />
+                      
+                      {/* NÚT LƯU TẤT CẢ ĐIỂM */}
+                      <button onClick={handleSaveAllClick} className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white rounded-xl text-sm font-bold transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 whitespace-nowrap flex items-center justify-center gap-2 shrink-0">
+                        <span>💾</span> Lưu Tất Cả Điểm
+                      </button>
                     </div>
                 </div>
                 
@@ -974,6 +1127,71 @@
                     <div className="h-28"></div>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: KIỂM TRA LỚP HỌC */}
+          {activeTab === 'verify' && (
+            <div className="max-w-7xl mx-auto px-6 space-y-6 animate-fade-in print:hidden">
+              <div className="bg-white p-8 rounded-3xl border border-slate-200/60 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-amber-400 to-orange-500"></div>
+                  <h2 className="text-xl font-extrabold text-slate-800 mb-2 flex items-center gap-3">
+                      <span className="text-2xl">🔎</span> Rà soát Danh sách Lớp & Học Viên
+                  </h2>
+                  <p className="text-sm text-slate-500 font-medium mb-8">
+                    Phần này giúp bạn thống kê số lượng học viên trong từng lớp và phát hiện lỗi gõ sai tên lớp (Ví dụ: <strong className="text-slate-700">"Lớp 1"</strong>, <strong className="text-slate-700">"Lop 1"</strong>, <strong className="text-slate-700">"Lớp1"</strong> sẽ bị hệ thống tính thành 3 lớp khác nhau do gõ không đồng nhất).
+                  </p>
+
+                  <div className="space-y-8">
+                      {Object.keys(groupedClassData).map(courseName => {
+                          const classes = groupedClassData[courseName];
+                          const classKeys = Object.keys(classes);
+                          if (classKeys.length === 0) return null;
+
+                          const totalStudentsInCourse = classKeys.reduce((sum, key) => sum + classes[key].students.length, 0);
+
+                          return (
+                              <div key={courseName} className="bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden">
+                                  <div className="bg-slate-100 px-6 py-4 border-b border-slate-200 flex justify-between items-center flex-wrap gap-4">
+                                      <h3 className="font-extrabold text-lg text-indigo-900">{courseName}</h3>
+                                      <div className="flex gap-4 text-sm font-bold text-slate-600">
+                                          <span className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm"><strong className="text-amber-600 text-base">{classKeys.length}</strong> lớp</span>
+                                          <span className="bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm"><strong className="text-indigo-600 text-base">{totalStudentsInCourse}</strong> học viên</span>
+                                      </div>
+                                  </div>
+                                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                      {classKeys.sort().map(classKey => {
+                                          const cls = classes[classKey];
+                                          return (
+                                              <div key={classKey} className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 hover:shadow-md transition-all flex flex-col max-h-80">
+                                                  <div className="flex justify-between items-start mb-3 border-b border-slate-100 pb-3 shrink-0">
+                                                      <h4 className="font-bold text-slate-800 break-words pr-2">
+                                                          {cls.displayName === '(Trống)' ? <span className="text-rose-500 italic">⚠️ Chưa nhập tên lớp</span> : `Lớp: ${cls.displayName}`}
+                                                      </h4>
+                                                      <span className="bg-indigo-50 text-indigo-700 text-xs font-black px-2 py-1 rounded-lg shrink-0">{cls.students.length} HV</span>
+                                                  </div>
+                                                  <div className="overflow-y-auto pr-2 flex-grow custom-scrollbar">
+                                                    <ul className="space-y-2">
+                                                        {cls.students.map(s => (
+                                                            <li key={s.id} className="flex justify-between items-center text-sm group p-2 hover:bg-slate-50 rounded-lg transition-colors border border-transparent hover:border-slate-200">
+                                                                <div className="flex flex-col">
+                                                                    <span className="font-semibold text-slate-700">{s.fullName}</span>
+                                                                    <span className="text-[10px] font-bold text-slate-400">{s.id}</span>
+                                                                </div>
+                                                                <button onClick={() => handleEditClick(s)} className="text-xs bg-white border border-slate-200 shadow-sm text-slate-600 px-3 py-1.5 rounded-lg hover:bg-indigo-50 hover:text-indigo-700 hover:border-indigo-200 font-bold opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-all" title="Chuyển sang trang Cập nhật hồ sơ để đổi tên lớp">Sửa lớp</button>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                  </div>
+                                              </div>
+                                          );
+                                      })}
+                                  </div>
+                              </div>
+                          );
+                      })}
+                  </div>
               </div>
             </div>
           )}
