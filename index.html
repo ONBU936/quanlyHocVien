@@ -31,6 +31,7 @@
     ::-webkit-scrollbar-track { background: #f8fafc; border-radius: 4px; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
     ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-slate-50 via-slate-100 to-slate-200 bg-fixed min-h-screen text-slate-800 relative antialiased selection:bg-[#27bdbe] selection:text-white">
@@ -54,12 +55,17 @@
       const [startDate, setStartDate] = useState(`${currentYear}-01-01`);
       const [endDate, setEndDate] = useState(`${currentYear}-12-31`);
       const [filterBranch, setFilterBranch] = useState('ALL');
-      const [searchQuery, setSearchQuery] = useState(''); // Thêm state lưu từ khóa tìm kiếm
+      const [searchQuery, setSearchQuery] = useState(''); 
+
+      // Pagination State
+      const [currentPageManage, setCurrentPageManage] = useState(1);
+      const [currentPageEval, setCurrentPageEval] = useState(1);
+      const [itemsPerPage, setItemsPerPage] = useState(50);
 
       // Modal Confirmation State
       const [showConfirmModal, setShowConfirmModal] = useState(false);
       const [showDeleteModal, setShowDeleteModal] = useState(false);
-      const [showDeleteAllModal, setShowDeleteAllModal] = useState(false); // Thêm state modal xóa tất cả
+      const [showDeleteAllModal, setShowDeleteAllModal] = useState(false); 
       const [showEvalModal, setShowEvalModal] = useState(false);
       const [studentActionTarget, setStudentActionTarget] = useState(null);
       
@@ -75,7 +81,7 @@
       // Import State
       const [showImportModal, setShowImportModal] = useState(false);
       const [importData, setImportData] = useState([]);
-      const [importDuplicates, setImportDuplicates] = useState([]); // State lưu danh sách trùng tên
+      const [importDuplicates, setImportDuplicates] = useState([]); 
       const [isImporting, setIsImporting] = useState(false);
       const [importProgress, setImportProgress] = useState({ current: 0, total: 0 });
       const fileInputRef = useRef(null);
@@ -108,9 +114,10 @@
         return 'CHƯA_ĐẠT';
       };
 
-      const getSkillStatus = (score, course) => {
-        if (score === '' || score === null || score === undefined) return '';
-        const num = Number(score);
+      const getSkillStatus = (score, course, isEvaluating = false) => {
+        if ((score === '' || score === null || score === undefined) && !isEvaluating) return '';
+        
+        const num = Number(score) || 0; 
         const normalizedCourse = String(course || '').trim().toLowerCase();
         const is200Scale = normalizedCourse === 'tiếng trung sơ cấp' || normalizedCourse === 'tiếng trung thiếu nhi';
         const maxScore = is200Scale ? 200 : 300;
@@ -125,7 +132,7 @@
 
       const getFinalGrade = (attStatus, skillStatus) => {
         if (!attStatus || !skillStatus) return 'CHƯA_ĐÁNH_GIÁ';
-        return skillStatus; // Bê nguyên thang điểm xếp loại sang kết quả chung
+        return skillStatus; 
       };
 
       const showNotif = (msg, type = 'success') => {
@@ -153,14 +160,12 @@
           } else {
             d = new Date(dateString);
           }
-          // Thử bắt trường hợp chuỗi ngày Việt Nam: dd/mm/yyyy
           if (isNaN(d.getTime()) && typeof dateString === 'string' && dateString.includes('/')) {
             const parts = dateString.split('/');
             if (parts.length >= 3) d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}`);
           }
           if (isNaN(d.getTime())) return typeof dateString === 'string' ? dateString : ''; 
           
-          // Cắt gọt đúng chuẩn YYYY-MM-DD
           const year = d.getFullYear();
           const month = `0${d.getMonth() + 1}`.slice(-2);
           const day = `0${d.getDate()}`.slice(-2);
@@ -168,11 +173,9 @@
         } catch(e) { return String(dateString); }
       };
 
-      // Hàm này tạo ra tất cả các "phiên bản" tên cột để ép Google Sheet phải nhận được dữ liệu
       const buildPayloadData = (data) => {
         const payload = { ...data };
         
-        // Tự động tạo ra các bản sao có dấu cách dư thừa để chống lỗi Google Sheet
         const keys = Object.keys(data);
         keys.forEach(k => {
           payload[k + ' '] = data[k];
@@ -181,7 +184,6 @@
           payload[k.toLowerCase() + ' '] = data[k];
         });
 
-        // Dự phòng luôn cả các tiêu đề bằng Tiếng Việt
         payload['Họ và tên'] = data.fullName;
         payload['Họ và Tên'] = data.fullName;
         payload['Ngày sinh'] = data.dob;
@@ -191,7 +193,6 @@
         payload['Ngày khai giảng'] = data.enrollmentDate;
         payload['Tên lớp'] = data.tenLop;
 
-        // Bổ sung map dữ liệu điểm số để đẩy lên Database
         payload['Tổng buổi'] = data.totalSessions;
         payload['Số buổi đi'] = data.attendedSessions;
         payload['Điểm thi'] = data.skillScore;
@@ -208,7 +209,6 @@
           .then(res => res.json())
           .then(data => {
             if (Array.isArray(data)) {
-              // Chuẩn hóa dữ liệu siêu mạnh: Loại bỏ mọi khoảng trắng và đưa về chữ thường
               const normalizedData = data.map(s => {
                 const cleanS = {};
                 for (let key in s) {
@@ -216,28 +216,42 @@
                   cleanS[cleanKey] = s[key];
                 }
 
+                const course = cleanS.course || cleanS['khóa học'] || '';
+                const tSessions = cleanS.totalsessions || '';
+                const aSessions = cleanS.attendedsessions || '';
+                const sScore = cleanS.skillscore || '';
+
+                const isEvaluating = tSessions !== '' || aSessions !== '' || sScore !== '';
+                const attStatus = getAttendanceStatus(Number(tSessions), Number(aSessions));
+                const skStatus = getSkillStatus(sScore, course, isEvaluating);
+                let finalG = 'CHƯA_HOÀN_THÀNH';
+                if (attStatus && skStatus) {
+                  finalG = getFinalGrade(attStatus, skStatus);
+                } else if (tSessions || sScore) {
+                  finalG = 'CHƯA_ĐÁNH_GIÁ';
+                }
+
                 return {
-                  ...s, // Giữ lại nguyên gốc
+                  ...s,
                   id: cleanS.id || '',
                   fullName: cleanS.fullname || cleanS['họ và tên'] || '',
                   tenLop: cleanS.tenlop || cleanS['tên lớp'] || '',
                   dob: cleanS.dob || cleanS['ngày sinh'] || '',
                   gender: cleanS.gender || cleanS['giới tính'] || '',
-                  course: cleanS.course || cleanS['khóa học'] || '',
+                  course: course,
                   branch: cleanS.branch || cleanS['chi nhánh'] || 'Offline',
                   enrollmentDate: cleanS.enrollmentdate || cleanS['ngày khai giảng'] || '',
                   age: cleanS.age || '',
-                  totalSessions: cleanS.totalsessions || '',
-                  attendedSessions: cleanS.attendedsessions || '',
-                  attendanceStatus: cleanS.attendancestatus || '',
-                  skillScore: cleanS.skillscore || '',
-                  skillStatus: cleanS.skillstatus || '',
-                  finalGrade: cleanS.finalgrade || 'CHƯA_HOÀN_THÀNH'
+                  totalSessions: tSessions,
+                  attendedSessions: aSessions,
+                  attendanceStatus: attStatus,
+                  skillScore: sScore,
+                  skillStatus: skStatus,
+                  finalGrade: finalG
                 };
               });
               setStudents(normalizedData);
               
-              // Khởi tạo state nội bộ cho Cổng Đánh Giá
               const evData = {};
               normalizedData.forEach(s => {
                 evData[s.id] = {
@@ -289,17 +303,30 @@
 
         const age = calculateAge(formData.dob);
         
+        const tSessions = isEditing ? formData.totalSessions : '';
+        const aSessions = isEditing ? formData.attendedSessions : '';
+        const sScore = isEditing ? formData.skillScore : '';
+
+        const isEvaluating = tSessions !== '' || aSessions !== '' || sScore !== '';
+        const attStatus = getAttendanceStatus(Number(tSessions), Number(aSessions));
+        const skStatus = getSkillStatus(sScore, formData.course, isEvaluating);
+        let finalG = 'CHƯA_HOÀN_THÀNH';
+        if (attStatus && skStatus) {
+          finalG = getFinalGrade(attStatus, skStatus);
+        } else if (tSessions || sScore) {
+          finalG = 'CHƯA_ĐÁNH_GIÁ';
+        }
+
         const studentToSave = {
           ...formData,
           id: finalId,
           age: age,
-          // Đảm bảo không đè mất điểm cũ khi edit thông tin cơ bản
-          totalSessions: isEditing ? formData.totalSessions : '',
-          attendedSessions: isEditing ? formData.attendedSessions : '',
-          skillScore: isEditing ? formData.skillScore : '',
-          attendanceStatus: isEditing ? formData.attendanceStatus : '',
-          skillStatus: isEditing ? formData.skillStatus : '',
-          finalGrade: isEditing ? formData.finalGrade : 'CHƯA_HOÀN_THÀNH'
+          totalSessions: tSessions,
+          attendedSessions: aSessions,
+          skillScore: sScore,
+          attendanceStatus: attStatus,
+          skillStatus: skStatus,
+          finalGrade: finalG
         };
 
         try {
@@ -310,7 +337,7 @@
           showNotif(isEditing ? 'Cập nhật hồ sơ thành công!' : 'Đã thêm hồ sơ thành công!');
           setFormData(defaultForm);
           setIsEditing(false);
-          fetchData(); // Reload data
+          fetchData(); 
         } catch(e) {
           showNotif('Lỗi lưu dữ liệu. Hãy thử lại!', 'error');
           setIsLoading(false);
@@ -321,13 +348,12 @@
         setFormData({
           id: student.id,
           fullName: student.fullName || '',
-          dob: formatDateForInput(student.dob), // Đã áp dụng hàm xử lý ngày tháng mới
+          dob: formatDateForInput(student.dob), 
           tenLop: student.tenLop || '',
           gender: student.gender || '',
           course: student.course || '',
           branch: student.branch || 'Offline',
           enrollmentDate: formatDateForInput(student.enrollmentDate) || '',
-          // Giữ nguyên các trường điểm
           totalSessions: student.totalSessions,
           attendedSessions: student.attendedSessions,
           skillScore: student.skillScore,
@@ -416,8 +442,9 @@
         setIsLoading(true);
 
         const currentEval = evalData[studentActionTarget.id];
+        const isEvaluating = currentEval.totalSessions !== '' || currentEval.attendedSessions !== '' || currentEval.skillScore !== '';
         const attStatus = getAttendanceStatus(Number(currentEval.totalSessions), Number(currentEval.attendedSessions));
-        const skStatus = getSkillStatus(currentEval.skillScore, studentActionTarget.course);
+        const skStatus = getSkillStatus(currentEval.skillScore, studentActionTarget.course, isEvaluating);
         const finalGrade = getFinalGrade(attStatus, skStatus);
 
         const updatedStudent = {
@@ -448,7 +475,6 @@
         return filteredStudents.filter(s => {
           const ev = evalData[s.id];
           if (!ev) return false;
-          // So sánh dữ liệu hiện tại trên UI với dữ liệu gốc để tìm ra người bị sửa điểm
           const tSessionsChanged = String(ev.totalSessions || '') !== String(s.totalSessions || '');
           const aSessionsChanged = String(ev.attendedSessions || '') !== String(s.attendedSessions || '');
           const sScoreChanged = String(ev.skillScore || '') !== String(s.skillScore || '');
@@ -474,13 +500,13 @@
         let successCount = 0;
         let errorCount = 0;
 
-        // Lưu tuần tự từng học viên để tránh quá tải Google Apps Script
         for (let i = 0; i < pendingSaves.length; i++) {
           const student = pendingSaves[i];
           const currentEval = evalData[student.id];
           
+          const isEvaluating = currentEval.totalSessions !== '' || currentEval.attendedSessions !== '' || currentEval.skillScore !== '';
           const attStatus = getAttendanceStatus(Number(currentEval.totalSessions), Number(currentEval.attendedSessions));
-          const skStatus = getSkillStatus(currentEval.skillScore, student.course);
+          const skStatus = getSkillStatus(currentEval.skillScore, student.course, isEvaluating);
           const finalGrade = getFinalGrade(attStatus, skStatus);
 
           const updatedStudent = {
@@ -503,7 +529,6 @@
             console.error(`Lỗi lưu điểm HV ${student.id}:`, e);
             errorCount++;
           }
-          // Cập nhật tiến trình lên UI
           setSaveProgress({ current: i + 1, total: pendingSaves.length });
         }
 
@@ -515,7 +540,7 @@
           showNotif(`Đã lưu ${successCount}, lỗi ${errorCount} học viên. Vui lòng kiểm tra lại đường truyền.`, 'error');
         }
         
-        fetchData(); // Tải lại dữ liệu mới nhất
+        fetchData(); 
       };
 
       const handleFileUpload = (e) => {
@@ -525,17 +550,13 @@
         const reader = new FileReader();
         reader.onload = (evt) => {
           try {
-            // Sử dụng Uint8Array để đọc chuẩn định dạng cũ .xls (BIFF8) và định dạng mới .xlsx
             const data = new Uint8Array(evt.target.result);
-            
-            // Bật cellDates để định dạng ngày chuẩn từ Excel
             const wb = XLSX.read(data, { type: 'array', cellDates: true });
             const wsname = wb.SheetNames[0];
             const ws = wb.Sheets[wsname];
             const excelData = XLSX.utils.sheet_to_json(ws, { defval: "" }); 
 
             const parsedStudents = excelData.map(row => {
-              // Hàm map từ khóa (Header linh hoạt)
               const getVal = (keys) => {
                 for (let k of keys) {
                   const foundKey = Object.keys(row).find(key => key.toLowerCase().trim() === k.toLowerCase());
@@ -555,23 +576,20 @@
                 tenLop: String(getVal(['tên lớp', 'lớp', 'class', 'ten lop'])).trim(),
                 branch: String(getVal(['chi nhánh', 'cơ sở', 'branch', 'chi nhanh'])).trim() || 'Offline',
                 enrollmentDate: formatDateForInput(enrolRaw) || new Date().toISOString().slice(0, 10),
-                // Quét thêm 3 cột dữ liệu điểm nếu có
                 totalSessions: getVal(['tổng buổi', 'tong buoi', 'tổng số buổi']) || '',
                 attendedSessions: getVal(['số buổi đi', 'so buoi di', 'đi học']) || '',
                 skillScore: getVal(['điểm thi', 'diem thi', 'kỹ năng']) || '',
               };
-            }).filter(s => s.fullName && s.fullName !== 'undefined'); // Lọc bỏ dòng trống
+            }).filter(s => s.fullName && s.fullName !== 'undefined'); 
 
             if (parsedStudents.length === 0) {
               showNotif('Không tìm thấy dữ liệu hoặc cấu trúc file không hợp lệ!', 'error');
               return;
             }
 
-            // --- BẮT ĐẦU: Logic lọc trùng tên ---
             const existingNames = students.map(s => String(s.fullName || '').trim().toLowerCase());
             const dupes = parsedStudents.filter(s => existingNames.includes(String(s.fullName || '').trim().toLowerCase()));
             setImportDuplicates(dupes);
-            // --- KẾT THÚC: Logic lọc trùng tên ---
 
             setImportData(parsedStudents);
             setShowImportModal(true);
@@ -580,9 +598,8 @@
             showNotif('Lỗi đọc file. Vui lòng đảm bảo file là Excel (.xlsx, .xls) hoặc .csv!', 'error');
           }
         };
-        // Sử dụng ArrayBuffer để tương thích tối đa với .xls
         reader.readAsArrayBuffer(file);
-        e.target.value = null; // Reset để có thể click chọn lại file cũ
+        e.target.value = null; 
       };
 
       const executeImport = async () => {
@@ -593,7 +610,6 @@
         let successCount = 0;
         let errorCount = 0;
 
-        // Tính toán sequence mã HV tiếp theo
         let maxSeq = 0;
         students.forEach(s => {
           if (s.id && s.id.startsWith('ONBU')) {
@@ -605,16 +621,15 @@
           }
         });
 
-        // Đẩy tuần tự từng record lên
         for (let i = 0; i < importData.length; i++) {
           maxSeq++;
           const finalId = 'ONBU' + String(maxSeq).padStart(5, '0');
           const s = importData[i];
           const age = calculateAge(s.dob);
           
-          // Tự động tính toán điểm và xếp loại nếu trong file import có chứa dữ liệu điểm
+          const isEvaluating = s.totalSessions !== '' || s.attendedSessions !== '' || s.skillScore !== '';
           const attStatus = getAttendanceStatus(Number(s.totalSessions), Number(s.attendedSessions));
-          const skStatus = getSkillStatus(s.skillScore, s.course);
+          const skStatus = getSkillStatus(s.skillScore, s.course, isEvaluating);
           let finalG = 'CHƯA_HOÀN_THÀNH';
           if (attStatus && skStatus) {
             finalG = getFinalGrade(attStatus, skStatus);
@@ -645,13 +660,12 @@
             console.error(`Lỗi import HV ${s.fullName}:`, e);
             errorCount++;
           }
-          // Tăng tiến trình hiển thị
           setImportProgress({ current: i + 1, total: importData.length });
         }
 
         setIsImporting(false);
         setImportData([]);
-        setImportDuplicates([]); // Reset lại state trùng tên sau khi import xong
+        setImportDuplicates([]); 
         
         if (errorCount === 0) {
           showNotif(`Đã nhập thành công ${successCount} học viên từ file!`, 'success');
@@ -659,11 +673,10 @@
           showNotif(`Nhập thành công ${successCount}, lỗi ${errorCount} học viên.`, 'error');
         }
         
-        fetchData(); // Load lại data gốc
+        fetchData(); 
       };
 
       const handleDownloadTemplate = () => {
-        // Dữ liệu mẫu với các cột chuẩn mà hệ thống có thể đọc tốt nhất
         const templateData = [
           {
             'Họ và tên': 'Nguyễn Văn A',
@@ -691,29 +704,14 @@
           }
         ];
 
-        // Tạo worksheet từ dữ liệu JSON
         const ws = XLSX.utils.json_to_sheet(templateData);
-        
-        // Điều chỉnh độ rộng các cột cho đẹp và dễ nhìn
         const wscols = [
-          {wch: 25}, // Họ và tên
-          {wch: 15}, // Ngày sinh
-          {wch: 10}, // Giới tính
-          {wch: 25}, // Khóa học
-          {wch: 15}, // Tên lớp
-          {wch: 15}, // Chi nhánh
-          {wch: 20}, // Ngày khai giảng
-          {wch: 15}, // Tổng buổi
-          {wch: 15}, // Số buổi đi
-          {wch: 15}  // Điểm thi
+          {wch: 25}, {wch: 15}, {wch: 10}, {wch: 25}, {wch: 15}, {wch: 15}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}
         ];
         ws['!cols'] = wscols;
 
-        // Tạo workbook và gắn sheet vào
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "DanhSachHocVien");
-        
-        // Kích hoạt trình duyệt tải file về
         XLSX.writeFile(wb, "File_Mau_Nhap_Hoc_Vien_BeU.xlsx");
       };
 
@@ -740,7 +738,6 @@
           result = result.filter(s => s.branch === filterBranch);
         }
         
-        // Logic tìm kiếm theo Tên, Lớp hoặc Mã HV
         if (searchQuery.trim() !== '') {
           const query = searchQuery.toLowerCase().trim();
           result = result.filter(s => 
@@ -753,6 +750,67 @@
         return result;
       }, [students, filterType, startDate, endDate, filterBranch, searchQuery]);
 
+      // --- LOGIC PHÂN TRANG ---
+      useEffect(() => {
+        // Tự động quay về trang 1 nếu bộ lọc thay đổi
+        setCurrentPageManage(1);
+        setCurrentPageEval(1);
+      }, [filterType, startDate, endDate, filterBranch, searchQuery]);
+
+      const totalPagesManage = Math.ceil(filteredStudents.length / itemsPerPage) || 1;
+      const totalPagesEval = Math.ceil(filteredStudents.length / itemsPerPage) || 1;
+
+      const paginatedManageStudents = useMemo(() => {
+        const start = (currentPageManage - 1) * itemsPerPage;
+        return filteredStudents.slice(start, start + itemsPerPage);
+      }, [filteredStudents, currentPageManage, itemsPerPage]);
+
+      const paginatedEvalStudents = useMemo(() => {
+        const start = (currentPageEval - 1) * itemsPerPage;
+        return filteredStudents.slice(start, start + itemsPerPage);
+      }, [filteredStudents, currentPageEval, itemsPerPage]);
+
+      const renderPaginationControls = (currentPage, setCurrentPage, totalPages) => (
+        <div className="flex flex-col sm:flex-row items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50/50 gap-4 print:hidden">
+          <div className="flex items-center gap-4 text-sm text-slate-500 font-medium">
+            <span>Tổng số: <strong className="text-slate-800">{filteredStudents.length}</strong> hồ sơ</span>
+            <div className="w-px h-4 bg-slate-300"></div>
+            <div className="flex items-center gap-2">
+              <span>Hiển thị:</span>
+              <select 
+                value={itemsPerPage} 
+                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} 
+                className="bg-white border border-slate-200 rounded-lg px-2 py-1 outline-none text-slate-700 font-bold focus:border-teal-500 cursor-pointer shadow-sm"
+              >
+                <option value={20}>20 dòng / trang</option>
+                <option value={50}>50 dòng / trang</option>
+                <option value={100}>100 dòng / trang</option>
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setCurrentPage(p => Math.max(1, p - 1))} 
+              disabled={currentPage === 1} 
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentPage === 1 ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 shadow-sm'}`}
+            >
+              &laquo; Trước
+            </button>
+            <span className="text-sm font-medium text-slate-600 px-3 bg-white border border-slate-100 py-1.5 rounded-lg shadow-sm">
+              Trang <strong className="text-indigo-700">{currentPage}</strong> / {totalPages}
+            </span>
+            <button 
+              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} 
+              disabled={currentPage === totalPages} 
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold transition-all ${currentPage === totalPages ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-600 shadow-sm'}`}
+            >
+              Sau &raquo;
+            </button>
+          </div>
+        </div>
+      );
+      // ----------------------
+
       const coursesList = ['Tiếng Trung sơ cấp', 'Tiếng Trung trung cấp', 'Tiếng Trung cao cấp', 'Tiếng Trung giao tiếp', 'Tiếng Trung thiếu nhi'];
       
       const groupedClassData = useMemo(() => {
@@ -761,7 +819,6 @@
         result['Khác (Chưa phân khóa)'] = {}; 
 
         filteredStudents.forEach(s => {
-          // Chuẩn hóa tên khóa học về chữ thường để so sánh không phân biệt hoa/thường
           const courseLower = String(s.course || '').trim().toLowerCase();
           const targetCourse = coursesList.find(c => c.toLowerCase() === courseLower) || 'Khác (Chưa phân khóa)';
           
@@ -781,19 +838,15 @@
 
       const getCourseStats = (courseName) => {
         const targetCourseLower = String(courseName).toLowerCase();
-        
-        // Lọc học viên theo khóa, không phân biệt hoa/thường
         const inCourse = filteredStudents.filter(s => String(s.course || '').trim().toLowerCase() === targetCourseLower);
         const total = inCourse.length;
         
-        // Đếm số lớp dựa vào cột Tên Lớp (TenLop)
         const uniqueClasses = new Set();
         inCourse.forEach(s => {
           if (s.tenLop && s.tenLop.trim() !== '') uniqueClasses.add(s.tenLop.trim().toLowerCase());
         });
         const classes = uniqueClasses.size;
         
-        // Đếm số nữ, không phân biệt hoa/thường ("Nữ" hay "nữ" đều tính)
         const females = inCourse.filter(s => String(s.gender || '').trim().toLowerCase() === 'nữ').length;
         const over18 = inCourse.filter(s => s.age >= 18).length;
         
@@ -910,7 +963,6 @@
             </div>
           )}
 
-          {}
           {showSaveAllModal && (
             <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9998] flex items-center justify-center px-4 animate-fade-in">
               <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-[0_20px_50px_-12px_rgba(0,0,0,0.3)] border-t-4 border-teal-500">
@@ -988,9 +1040,7 @@
           <header className="bg-white/80 backdrop-blur-lg border-b border-slate-200/60 py-4 px-6 shadow-sm sticky top-0 z-40 print:hidden">
             <div className="max-w-7xl mx-auto flex items-center justify-between">
               <div className="flex items-center space-x-4">
-                {/* */}
                 <div className="flex-shrink-0 shadow-md rounded-2xl overflow-hidden border-2 border-white bg-white">
-                  {/* LOGO CỦA HỌC VIỆN */}
                   <img 
                     src="logo.png" 
                     alt="Logo Học Viện BeU" 
@@ -1071,7 +1121,6 @@
             </div>
           </div>
 
-          {}
           {/* TAB 1: QUẢN LÝ HỌC VIÊN */}
           {activeTab === 'manage' && (
             <div className="max-w-7xl mx-auto px-6 space-y-8 print:hidden animate-fade-in">
@@ -1114,7 +1163,7 @@
                           className="px-4 py-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold rounded-xl hover:bg-emerald-600 hover:text-white transition-all text-sm flex items-center justify-center gap-2 shadow-sm"
                           title="Tải lên file Excel (.xlsx, .xls) hoặc CSV để nhập nhanh danh sách học viên"
                         >
-                          <span className="text-lg">📄</span> Quét file Excel (Import)
+                          <span className="text-lg">📄</span> Quét file Excel
                         </button>
                       </div>
                     </div>
@@ -1178,14 +1227,13 @@
                 </form>
               </div>
 
-              <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm overflow-hidden flex flex-col">
                 <div className="px-8 py-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between bg-slate-50/50 gap-4">
                     <h3 className="text-lg font-extrabold text-slate-800 flex items-center gap-2">
                         <span className="text-indigo-500">📋</span> Danh sách Học Viên
                     </h3>
                     
                     <div className="flex flex-col sm:flex-row items-center gap-4">
-                      {/* Thanh tìm kiếm nhanh Tab 1 */}
                       <div className="relative shrink-0 w-full sm:w-auto">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                           <span className="text-slate-400">🔍</span>
@@ -1199,7 +1247,6 @@
                         />
                       </div>
 
-                      {/* Nút Xóa Tất Cả */}
                       <button 
                         onClick={() => { if(filteredStudents.length > 0) setShowDeleteAllModal(true); else showNotif('Không có dữ liệu để xóa!', 'error'); }} 
                         className={`w-full sm:w-auto px-4 py-2.5 border font-bold rounded-xl transition-all text-sm flex items-center justify-center gap-2 shadow-sm shrink-0 ${filteredStudents.length > 0 ? 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-600 hover:text-white' : 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'}`}
@@ -1209,7 +1256,7 @@
                       </button>
                     </div>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto min-h-[300px]">
                   <table className="w-full text-left border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
@@ -1226,10 +1273,10 @@
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredStudents.length === 0 ? (
+                      {paginatedManageStudents.length === 0 ? (
                         <tr><td colSpan="10" className="text-center py-12 text-slate-400 font-medium bg-slate-50/50">Không có dữ liệu phù hợp với bộ lọc.</td></tr>
                       ) : (
-                        filteredStudents.map((s) => (
+                        paginatedManageStudents.map((s) => (
                           <tr key={s.id} className="hover:bg-slate-50/80 transition-colors group">
                             <td className="py-4 px-6 font-extrabold text-indigo-700">{s.id}</td>
                             <td className="py-4 px-6 font-bold text-slate-800">{s.fullName}</td>
@@ -1254,6 +1301,9 @@
                     </tbody>
                   </table>
                 </div>
+                
+                {/* THANH PHÂN TRANG TAB QUẢN LÝ */}
+                {filteredStudents.length > 0 && renderPaginationControls(currentPageManage, setCurrentPageManage, totalPagesManage)}
               </div>
             </div>
           )}
@@ -1261,7 +1311,7 @@
           {/* TAB 2: CỔNG ĐÁNH GIÁ */}
           {activeTab === 'evaluate' && (
             <div className="max-w-7xl mx-auto px-6 print:hidden animate-fade-in">
-              <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm overflow-hidden">
+              <div className="bg-white rounded-3xl border border-slate-200/60 shadow-sm overflow-hidden flex flex-col">
                 <div className="px-8 py-5 border-b border-slate-100 bg-slate-50/50 flex flex-col xl:flex-row xl:items-center justify-between gap-4">
                     <div>
                       <h2 className="text-xl font-extrabold text-indigo-900 mb-1 flex items-center gap-3">
@@ -1271,7 +1321,6 @@
                     </div>
                     
                     <div className="flex flex-col sm:flex-row items-center gap-4">
-                      {/* Thanh tìm kiếm nhanh Tab 2 */}
                       <div className="relative shrink-0 w-full sm:w-auto">
                         <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
                           <span className="text-slate-400">🔍</span>
@@ -1285,14 +1334,13 @@
                         />
                       </div>
                       
-                      {/* NÚT LƯU TẤT CẢ ĐIỂM */}
                       <button onClick={handleSaveAllClick} className="w-full sm:w-auto px-5 py-2.5 bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white rounded-xl text-sm font-bold transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5 whitespace-nowrap flex items-center justify-center gap-2 shrink-0">
                         <span>💾</span> Lưu Tất Cả Điểm
                       </button>
                     </div>
                 </div>
                 
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto min-h-[300px]">
                   <table className="w-full text-left border-collapse text-sm">
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
@@ -1307,13 +1355,14 @@
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredStudents.length === 0 ? (
+                      {paginatedEvalStudents.length === 0 ? (
                         <tr><td colSpan="8" className="text-center py-12 text-slate-400 font-medium bg-slate-50/50">Không có học viên nào trong danh sách.</td></tr>
                       ) : (
-                        filteredStudents.map(s => {
+                        paginatedEvalStudents.map(s => {
                           const ev = evalData[s.id] || { totalSessions: '', attendedSessions: '', skillScore: '' };
+                          const isEvaluating = ev.totalSessions !== '' || ev.attendedSessions !== '' || ev.skillScore !== '';
                           const tmpAttStatus = getAttendanceStatus(Number(ev.totalSessions), Number(ev.attendedSessions));
-                          const tmpSkStatus = getSkillStatus(ev.skillScore, s.course);
+                          const tmpSkStatus = getSkillStatus(ev.skillScore, s.course, isEvaluating);
                           const normalizedCourse = String(s.course || '').trim().toLowerCase();
                           const maxPlaceholder = (normalizedCourse === 'tiếng trung sơ cấp' || normalizedCourse === 'tiếng trung thiếu nhi') ? 'Max 200' : 'Max 300';
                           
@@ -1362,6 +1411,9 @@
                     </tbody>
                   </table>
                 </div>
+                
+                {/* THANH PHÂN TRANG TAB ĐÁNH GIÁ */}
+                {filteredStudents.length > 0 && renderPaginationControls(currentPageEval, setCurrentPageEval, totalPagesEval)}
               </div>
             </div>
           )}
@@ -1415,7 +1467,7 @@
                       <td className="border-r border-indigo-100 py-4 px-4 text-left print:py-2 print:border-slate-400">TỔNG CỘNG</td>
                       <td className="border-r border-indigo-100 py-4 px-4 text-indigo-700 text-base print:py-2 print:border-slate-400">{filteredStudents.length}</td>
                       <td className="border-r border-indigo-100 py-4 px-4 text-base print:py-2 print:border-slate-400">{coursesList.reduce((acc, c) => acc + getCourseStats(c).classes, 0)}</td>
-                      <td className="border-r border-indigo-100 py-4 px-4 text-base print:py-2 print:border-slate-400">{filteredStudents.filter(s => s.gender === 'Nữ').length}</td>
+                      <td className="border-r border-indigo-100 py-4 px-4 text-base print:py-2 print:border-slate-400">{filteredStudents.filter(s => String(s.gender || '').trim().toLowerCase() === 'nữ').length}</td>
                       <td className="border-r border-indigo-100 py-4 px-4 text-emerald-700 text-base print:py-2 print:border-slate-400">{filteredStudents.filter(s => s.age >= 18).length}</td>
                       <td className="py-4 px-4 text-base print:py-2 print:border-slate-400">{filteredStudents.length}</td>
                     </tr>
