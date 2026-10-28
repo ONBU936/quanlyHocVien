@@ -189,6 +189,14 @@
         payload['Ngày khai giảng'] = data.enrollmentDate;
         payload['Tên lớp'] = data.tenLop;
 
+        // Bổ sung map dữ liệu điểm số để đẩy lên Database
+        payload['Tổng buổi'] = data.totalSessions;
+        payload['Số buổi đi'] = data.attendedSessions;
+        payload['Điểm thi'] = data.skillScore;
+        payload['Chuyên cần'] = data.attendanceStatus;
+        payload['Xếp loại kỹ năng'] = data.skillStatus;
+        payload['Kết quả cuối khóa'] = data.finalGrade;
+
         return payload;
       };
 
@@ -545,6 +553,10 @@
                 tenLop: String(getVal(['tên lớp', 'lớp', 'class', 'ten lop'])).trim(),
                 branch: String(getVal(['chi nhánh', 'cơ sở', 'branch', 'chi nhanh'])).trim() || 'Offline',
                 enrollmentDate: formatDateForInput(enrolRaw) || new Date().toISOString().slice(0, 10),
+                // Quét thêm 3 cột dữ liệu điểm nếu có
+                totalSessions: getVal(['tổng buổi', 'tong buoi', 'tổng số buổi']) || '',
+                attendedSessions: getVal(['số buổi đi', 'so buoi di', 'đi học']) || '',
+                skillScore: getVal(['điểm thi', 'diem thi', 'kỹ năng']) || '',
               };
             }).filter(s => s.fullName && s.fullName !== 'undefined'); // Lọc bỏ dòng trống
 
@@ -591,17 +603,27 @@
           const s = importData[i];
           const age = calculateAge(s.dob);
           
+          // Tự động tính toán điểm và xếp loại nếu trong file import có chứa dữ liệu điểm
+          const attStatus = getAttendanceStatus(Number(s.totalSessions), Number(s.attendedSessions));
+          const skStatus = getSkillStatus(s.skillScore, s.course);
+          let finalG = 'CHƯA_HOÀN_THÀNH';
+          if (attStatus && skStatus) {
+            finalG = getFinalGrade(attStatus, skStatus);
+          } else if (s.totalSessions || s.skillScore) {
+            finalG = 'CHƯA_ĐÁNH_GIÁ';
+          }
+
           const studentToSave = {
             ...defaultForm,
             ...s,
             id: finalId,
             age: age,
-            totalSessions: '',
-            attendedSessions: '',
-            skillScore: '',
-            attendanceStatus: '',
-            skillStatus: '',
-            finalGrade: 'CHƯA_HOÀN_THÀNH'
+            totalSessions: s.totalSessions || '',
+            attendedSessions: s.attendedSessions || '',
+            skillScore: s.skillScore || '',
+            attendanceStatus: attStatus,
+            skillStatus: skStatus,
+            finalGrade: finalG
           };
 
           try {
@@ -640,7 +662,10 @@
             'Khóa học': 'Tiếng Trung sơ cấp',
             'Tên lớp': '3K6 SCF1.1',
             'Chi nhánh': 'Offline',
-            'Ngày khai giảng': '20/10/2026'
+            'Ngày khai giảng': '20/10/2026',
+            'Tổng buổi': 45,
+            'Số buổi đi': 43,
+            'Điểm thi': 185
           },
           {
             'Họ và tên': 'Trần Thị B',
@@ -649,7 +674,10 @@
             'Khóa học': 'Tiếng Trung giao tiếp',
             'Tên lớp': 'GT 2.2',
             'Chi nhánh': 'Online',
-            'Ngày khai giảng': '25/10/2026'
+            'Ngày khai giảng': '25/10/2026',
+            'Tổng buổi': 30,
+            'Số buổi đi': 28,
+            'Điểm thi': 260
           }
         ];
 
@@ -664,7 +692,10 @@
           {wch: 25}, // Khóa học
           {wch: 15}, // Tên lớp
           {wch: 15}, // Chi nhánh
-          {wch: 20}  // Ngày khai giảng
+          {wch: 20}, // Ngày khai giảng
+          {wch: 15}, // Tổng buổi
+          {wch: 15}, // Số buổi đi
+          {wch: 15}  // Điểm thi
         ];
         ws['!cols'] = wscols;
 
