@@ -110,7 +110,8 @@
       const getSkillStatus = (score, course) => {
         if (score === '' || score === null || score === undefined) return '';
         const num = Number(score);
-        const is200Scale = course === 'Tiếng Trung sơ cấp' || course === 'Tiếng Trung thiếu nhi';
+        const normalizedCourse = String(course || '').trim().toLowerCase();
+        const is200Scale = normalizedCourse === 'tiếng trung sơ cấp' || normalizedCourse === 'tiếng trung thiếu nhi';
         const maxScore = is200Scale ? 200 : 300;
         const ratio = (num / maxScore) * 100;
         
@@ -751,8 +752,9 @@
         result['Khác (Chưa phân khóa)'] = {}; 
 
         filteredStudents.forEach(s => {
-          const course = s.course;
-          const targetCourse = result[course] ? course : 'Khác (Chưa phân khóa)';
+          // Chuẩn hóa tên khóa học về chữ thường để so sánh không phân biệt hoa/thường
+          const courseLower = String(s.course || '').trim().toLowerCase();
+          const targetCourse = coursesList.find(c => c.toLowerCase() === courseLower) || 'Khác (Chưa phân khóa)';
           
           const rawClass = s.tenLop || '';
           const normalizedClass = rawClass.trim().toLowerCase() || '(trống)';
@@ -769,8 +771,12 @@
       }, [filteredStudents]);
 
       const getCourseStats = (courseName) => {
-        const inCourse = filteredStudents.filter(s => s.course === courseName);
+        const targetCourseLower = String(courseName).toLowerCase();
+        
+        // Lọc học viên theo khóa, không phân biệt hoa/thường
+        const inCourse = filteredStudents.filter(s => String(s.course || '').trim().toLowerCase() === targetCourseLower);
         const total = inCourse.length;
+        
         // Đếm số lớp dựa vào cột Tên Lớp (TenLop)
         const uniqueClasses = new Set();
         inCourse.forEach(s => {
@@ -778,8 +784,10 @@
         });
         const classes = uniqueClasses.size;
         
-        const females = inCourse.filter(s => s.gender === 'Nữ').length;
+        // Đếm số nữ, không phân biệt hoa/thường ("Nữ" hay "nữ" đều tính)
+        const females = inCourse.filter(s => String(s.gender || '').trim().toLowerCase() === 'nữ').length;
         const over18 = inCourse.filter(s => s.age >= 18).length;
+        
         return { total, classes, females, over18, vn: total, students: inCourse };
       };
 
@@ -1280,6 +1288,8 @@
                           const ev = evalData[s.id] || { totalSessions: '', attendedSessions: '', skillScore: '' };
                           const tmpAttStatus = getAttendanceStatus(Number(ev.totalSessions), Number(ev.attendedSessions));
                           const tmpSkStatus = getSkillStatus(ev.skillScore, s.course);
+                          const normalizedCourse = String(s.course || '').trim().toLowerCase();
+                          const maxPlaceholder = (normalizedCourse === 'tiếng trung sơ cấp' || normalizedCourse === 'tiếng trung thiếu nhi') ? 'Max 200' : 'Max 300';
                           
                           return (
                             <tr key={s.id} className="hover:bg-slate-50/80 transition-colors group">
@@ -1305,7 +1315,7 @@
                                 {tmpAttStatus === 'CHƯA_ĐẠT' && <span className="bg-rose-100 border border-rose-200 text-rose-700 px-3 py-1 rounded-full text-xs font-extrabold shadow-sm">Chưa đạt (&lt;70%)</span>}
                               </td>
                               <td className="py-4 px-5 text-center">
-                                <input type="number" placeholder={(s.course === 'Tiếng Trung sơ cấp' || s.course === 'Tiếng Trung thiếu nhi') ? 'Max 200' : 'Max 300'} value={ev.skillScore !== undefined ? ev.skillScore : (s.skillScore || '')} onChange={e => handleEvalChange(s.id, 'skillScore', e.target.value)} className="w-24 bg-slate-100 border border-slate-200 rounded-xl px-2 py-2 text-center font-bold text-sm text-slate-700 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/15 transition-all outline-none" />
+                                <input type="number" placeholder={maxPlaceholder} value={ev.skillScore !== undefined ? ev.skillScore : (s.skillScore || '')} onChange={e => handleEvalChange(s.id, 'skillScore', e.target.value)} className="w-24 bg-slate-100 border border-slate-200 rounded-xl px-2 py-2 text-center font-bold text-sm text-slate-700 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/15 transition-all outline-none" />
                               </td>
                               <td className="py-4 px-5 text-center bg-indigo-50/30">
                                 {tmpSkStatus === 'XUẤT_SẮC' && <span className="bg-purple-100 border border-purple-200 text-purple-700 px-3 py-1 rounded-full text-xs font-extrabold shadow-sm">Xuất sắc</span>}
